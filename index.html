@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#2563eb">
-<title>PET Family Beta 0.1</title>
+<title>PET Family Beta 0.1.1</title>
 <link rel="manifest" href="manifest.webmanifest">
 <style>
 :root{--bg:#f5f7fb;--card:#fff;--ink:#172033;--muted:#6b7280;--line:#e5e9f2;--blue:#2563eb;--soft:#eaf2ff;--good:#198754;--warn:#b97900;--bad:#c0392b;--purple:#7c3aed}
@@ -68,7 +68,7 @@
 
 <div class="app">
 <section id="home" class="section active">
-  <h1>PET Family Beta</h1><div class="sub">家庭封闭试用 · 智能每日测试 · 间隔记忆 · 听觉词汇 · 词族 <span class="tag">Beta 0.1</span></div>
+  <h1>PET Family Beta</h1><div class="sub">家庭封闭试用 · 智能每日测试 · 间隔记忆 · 听觉词汇 · 词族 <span class="tag">Beta 0.1.1</span></div>
   <div class="gap"></div>
   <div class="grid metrics"><div class="card metric"><div class="k">英→中正确率</div><div class="v" id="eAcc">—</div></div><div class="card metric"><div class="k">英→中平均反应</div><div class="v" id="eRt">—</div></div><div class="card metric"><div class="k">中→英正确率</div><div class="v" id="zAcc">—</div></div><div class="card metric"><div class="k">中→英平均反应</div><div class="v" id="zRt">—</div></div></div>
   <div class="gap"></div><div class="card"><h2>今日智能测试</h2><div id="today" class="sub"></div><div class="gap"></div><div class="row"><button class="primary" onclick="quickStart('e2z')">开始今日 英→中</button><button class="soft" onclick="quickStart('z2e')">开始今日 中→英</button></div><div class="small" style="margin-top:8px">家长只需录入陌生词。软件按到期日和掌握状态自动安排；当天测试过的词不会因答错再次自动塞回当天测试。</div></div>
@@ -129,7 +129,7 @@ let PRE_V030_KEY='pet_family_beta_pre_upgrade2_pending';
 
 const SUPABASE_URL='https://zzbiowklurwnbyhpkqbs.supabase.co';
 const SUPABASE_KEY='sb_publishable_Vupqf_GXGHw5BMCUzHz1WA_O_GrHqn1';
-const APP_VERSION='beta-0.1.0';
+const APP_VERSION='beta-0.1.1';
 const AUTH_STORAGE='pet_family_beta_auth';
 let betaSession=null,betaParent=null,betaChild=null;
 let cloudTimer=null,cloudBusy=false,cloudQueued=false,cloudSuppressPush=false,cloudConflictState=null;
@@ -168,7 +168,8 @@ async function betaSignup(){
   let email=betaEmail.value.trim(),password=betaPassword.value;
   if(!email||password.length<6)return betaMsg('请输入有效邮箱，密码至少 6 位。',true);
   betaMsg('正在注册…');
-  let r=await fetch(SUPABASE_URL+'/auth/v1/signup',{method:'POST',headers:betaAuthHeaders(),body:JSON.stringify({email,password})});
+  const redirectTo=window.location.origin+window.location.pathname;
+  let r=await fetch(SUPABASE_URL+'/auth/v1/signup?redirect_to='+encodeURIComponent(redirectTo),{method:'POST',headers:betaAuthHeaders(),body:JSON.stringify({email,password})});
   let j=await r.json().catch(()=>({}));
   if(!r.ok)return betaMsg(j.msg||j.message||'注册失败',true);
   if(j.access_token){j.expires_at=Math.floor(Date.now()/1000)+(j.expires_in||3600);saveBetaSession(j);betaSession=j;return betaAfterAuth()}
