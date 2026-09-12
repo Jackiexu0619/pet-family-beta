@@ -1,0 +1,9 @@
+{
+  "name": "PET Family Beta",
+  "short_name": "PET Beta",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#2563eb",
+  "description": "受邀家庭试用：陌生词录入、自动每日测试、间隔记忆、词族、统计、账号隔离与云同步"
+}
