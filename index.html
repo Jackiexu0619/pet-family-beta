@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#2563eb">
-<title>PET Family Beta 0.1.1</title>
+<title>PET Family Beta 0.1.2</title>
 <link rel="manifest" href="manifest.webmanifest">
 <style>
 :root{--bg:#f5f7fb;--card:#fff;--ink:#172033;--muted:#6b7280;--line:#e5e9f2;--blue:#2563eb;--soft:#eaf2ff;--good:#198754;--warn:#b97900;--bad:#c0392b;--purple:#7c3aed}
@@ -68,7 +68,7 @@
 
 <div class="app">
 <section id="home" class="section active">
-  <h1>PET Family Beta</h1><div class="sub">家庭封闭试用 · 智能每日测试 · 间隔记忆 · 听觉词汇 · 词族 <span class="tag">Beta 0.1.1</span></div>
+  <h1>PET Family Beta</h1><div class="sub">家庭封闭试用 · 智能每日测试 · 间隔记忆 · 听觉词汇 · 词族 <span class="tag">Beta 0.1.2</span></div>
   <div class="gap"></div>
   <div class="grid metrics"><div class="card metric"><div class="k">英→中正确率</div><div class="v" id="eAcc">—</div></div><div class="card metric"><div class="k">英→中平均反应</div><div class="v" id="eRt">—</div></div><div class="card metric"><div class="k">中→英正确率</div><div class="v" id="zAcc">—</div></div><div class="card metric"><div class="k">中→英平均反应</div><div class="v" id="zRt">—</div></div></div>
   <div class="gap"></div><div class="card"><h2>今日智能测试</h2><div id="today" class="sub"></div><div class="gap"></div><div class="row"><button class="primary" onclick="quickStart('e2z')">开始今日 英→中</button><button class="soft" onclick="quickStart('z2e')">开始今日 中→英</button></div><div class="small" style="margin-top:8px">家长只需录入陌生词。软件按到期日和掌握状态自动安排；当天测试过的词不会因答错再次自动塞回当天测试。</div></div>
@@ -129,7 +129,7 @@ let PRE_V030_KEY='pet_family_beta_pre_upgrade2_pending';
 
 const SUPABASE_URL='https://zzbiowklurwnbyhpkqbs.supabase.co';
 const SUPABASE_KEY='sb_publishable_Vupqf_GXGHw5BMCUzHz1WA_O_GrHqn1';
-const APP_VERSION='beta-0.1.1';
+const APP_VERSION='beta-0.1.2';
 const AUTH_STORAGE='pet_family_beta_auth';
 let betaSession=null,betaParent=null,betaChild=null;
 let cloudTimer=null,cloudBusy=false,cloudQueued=false,cloudSuppressPush=false,cloudConflictState=null;
@@ -489,9 +489,9 @@ function exportData(){downloadJson(state,'PET_Family_Beta_'+new Date().toISOStri
 function exportPreUpgradeBackup(){let x=localStorage.getItem(PRE_V030_KEY)||localStorage.getItem(PRE_KEY);if(!x)return alert('当前浏览器里没有升级前快照。');try{downloadJson(JSON.parse(x),localStorage.getItem(PRE_V030_KEY)?'PET打卡_Beta升级前快照.json':'PET打卡_Beta升级前快照.json')}catch(e){alert('升级前快照损坏，无法导出')}}
 function importData(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{let incoming=JSON.parse(r.result);localStorage.setItem('pet_family_beta_backup_pre_import_'+Date.now(),JSON.stringify(state));state=migrateState(incoming);save();alert('导入并迁移成功：原有词汇、历史、每日计划已保留。')}catch(x){alert('文件格式不正确：'+x.message)}finally{e.target.value=''}};r.readAsText(f)}
 function resetAll(){if(confirm('确定清空所有训练记录吗？这会保留升级前快照，但会重置当前数据。')){state=init();save()}}
-function renderBackupInfo(){let pre30=localStorage.getItem(PRE_V030_KEY),pre20=localStorage.getItem(PRE_KEY),pre=pre30||pre20;backupInfo.innerHTML=pre30?'已保留 <b>升级到 Beta 前的本机快照</b>。Beta 0.1 会自动对比并补回缺失数据；也可手动再次执行合并恢复。':pre20?'已检测到早期升级快照；可用于合并恢复缺失数据。':'本机没有检测到升级前快照。建议定期导出 JSON 到“文件”App或电脑。';preBackupBtn.disabled=!pre;preBackupBtn.style.opacity=pre?'1':'.5';if(typeof recoverPreBtn!=='undefined'&&recoverPreBtn){recoverPreBtn.disabled=!pre;recoverPreBtn.style.opacity=pre?'1':'.5'}}
+function renderBackupInfo(){return}
 function drawTrend(){let c=document.getElementById('trend');if(!c)return;let ctx=c.getContext('2d'),dpr=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;if(!w||!h)return;c.width=w*dpr;c.height=h*dpr;ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);let ds=[];for(let i=13;i>=0;i--){let d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-i);ds.push(d)}let vals=ds.map(d=>{let n=d.getTime()+DAY,t=state.tests.filter(x=>x.ts>=d.getTime()&&x.ts<n&&effectiveResult(x)!=='wrong');return{e:avg(t.filter(x=>x.mode==='e2z').map(effectiveRt)),z:avg(t.filter(x=>x.mode==='z2e').map(effectiveRt))}}),nums=vals.flatMap(v=>[v.e,v.z]).filter(Number.isFinite);ctx.strokeStyle='#d8dee9';ctx.lineWidth=1;for(let i=0;i<4;i++){let y=16+(h-34)*i/3;ctx.beginPath();ctx.moveTo(28,y);ctx.lineTo(w-8,y);ctx.stroke()}if(!nums.length){ctx.fillStyle='#6b7280';ctx.font='12px sans-serif';ctx.fillText('还没有可绘制的反应时间记录',28,h/2);return}let max=Math.max(6,...nums),min=Math.min(0,...nums),x=i=>28+(w-42)*i/13,y=v=>16+(h-34)*(max-v)/(max-min||1);function line(key,color){ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();let started=false;vals.forEach((v,i)=>{let n=v[key];if(!Number.isFinite(n)){started=false;return}let xx=x(i),yy=y(n);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy)});ctx.stroke()}line('e','#2563eb');line('z','#7c3aed');ctx.fillStyle='#6b7280';ctx.font='10px sans-serif';ctx.fillText('14天前',28,h-4);ctx.fillText('今天',w-34,h-4)}
-function renderAll(){state=migrateState(state);voiceLang.value=state.settings.voiceLang;voiceRate.value=state.settings.voiceRate;rateText.textContent=Number(state.settings.voiceRate).toFixed(2);renderHome();renderReview();renderWords();renderStructures();renderStats();renderHistory();renderBackupInfo();renderCloudUI();updateFamilyHint();syncTestSourceUI();setTimeout(drawTrend,30)}
+function renderAll(){state=migrateState(state);voiceLang.value=state.settings.voiceLang;voiceRate.value=state.settings.voiceRate;rateText.textContent=Number(state.settings.voiceRate).toFixed(2);renderHome();renderReview();renderWords();renderStructures();renderStats();renderHistory();renderCloudUI();updateFamilyHint();syncTestSourceUI();setTimeout(drawTrend,30)}
 renderAll();
 document.querySelectorAll('.app>.section').forEach(x=>{let on=x.id==='home';x.hidden=!on;x.classList.toggle('active',on)});
 (async function betaBoot(){
