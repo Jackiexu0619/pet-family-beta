@@ -1,9 +1,9 @@
 {
-  "name": "PET 打卡",
-  "short_name": "PET打卡",
+  "name": "WordLoop Family",
+  "short_name": "WordLoop",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#f5f7fb",
   "theme_color": "#2563eb",
-  "description": "Lucas PET v0.5.10.7：含离线拼写检查、高风险易混词释义核对、智能 Review、双向 Test、词族、固定搭配和云同步"
+  "description": "WordLoop Family v0.5.10.7：英语单词学习与复习，含离线拼写检查、高风险易混词释义核对、智能 Review、双向 Test、词族、固定搭配和家庭数据隔离同步"
 }
