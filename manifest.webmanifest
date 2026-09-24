@@ -1,9 +1,9 @@
 {
-  "name": "PET Family Beta",
-  "short_name": "PET Beta",
+  "name": "PET 打卡",
+  "short_name": "PET打卡",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#f5f7fb",
   "theme_color": "#2563eb",
-  "description": "PET Family Beta v0.5.10.5：与 Lucas 正式版同步的 Review→Test、智能 Test、词族、固定搭配、词汇管理和家庭账号隔离云同步"
+  "description": "Lucas PET v0.5.10.7：含离线拼写检查、高风险易混词释义核对、智能 Review、双向 Test、词族、固定搭配和云同步"
 }
