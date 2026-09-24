@@ -1,4 +1,4 @@
-const CACHE='wordloop-family-v0.5.10.7';
+const CACHE='wordloop-family-v0.5.10.8';
 const ASSETS=['./index.html','./manifest.webmanifest'];
 
 self.addEventListener('install',e=>{
