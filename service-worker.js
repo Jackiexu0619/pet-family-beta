@@ -1,4 +1,4 @@
-const CACHE='wordloop-family-v0.5.12.4-r1';
+const CACHE='wordloop-family-v0.5.12.5-r1';
 const ASSETS=['./index.html','./manifest.webmanifest'];
 
 self.addEventListener('install',e=>{
@@ -23,12 +23,15 @@ self.addEventListener('fetch',e=>{
     e.respondWith(
       fetch(e.request)
         .then(r=>{
-          const copy=r.clone();
-          caches.open(CACHE).then(c=>c.put('./index.html',copy)).catch(()=>{});
+          if(r.ok){
+            const copy=r.clone();
+            caches.open(CACHE).then(c=>c.put('./index.html',copy)).catch(()=>{});
+          }
           return r;
         })
         .catch(async()=>{
-          const cached=await caches.match('./index.html');
+          const cache=await caches.open(CACHE);
+          const cached=await cache.match('./index.html');
           return cached || Response.error();
         })
     );
@@ -36,6 +39,6 @@ self.addEventListener('fetch',e=>{
   }
 
   e.respondWith(
-    caches.match(e.request).then(cached=>cached||fetch(e.request))
+    caches.open(CACHE).then(cache=>cache.match(e.request).then(cached=>cached||fetch(e.request)))
   );
 });
