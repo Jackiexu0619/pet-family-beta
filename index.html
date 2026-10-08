@@ -419,11 +419,12 @@ let PRE_V050_KEY='pet_family_beta_pre_v050_pending';
 let PRE_V053_KEY='pet_family_beta_pre_v053_pending';
 // Legacy recovery-code cloud transport has been permanently disabled in Family.
 const CLOUD_ENDPOINTS=[];
-const CLOUD_ENDPOINT_PREF_STORAGE='pet_checkin_cloud_endpoint_pref';
-const CLOUD_KEY_STORAGE='pet_checkin_cloud_recovery_key';
-const CLOUD_ENABLED_STORAGE='pet_checkin_cloud_enabled';
-const CLOUD_META_STORAGE='pet_checkin_cloud_meta';
-const APP_VERSION='0.5.12.5';
+const CLOUD_ENDPOINT_PREF_STORAGE='pet_family_legacy_cloud_endpoint_pref';
+const CLOUD_KEY_STORAGE='pet_family_legacy_cloud_recovery_key';
+const CLOUD_ENABLED_STORAGE='pet_family_legacy_cloud_enabled';
+const CLOUD_META_STORAGE='pet_family_legacy_cloud_meta';
+const APP_VERSION='0.5.12.6';
+const FAMILY_PRODUCT='wordloop-family';
 // v0.5.12.5 hotfix: authentication config is initialized before any local-data migration.
 // This prevents the login path from ever seeing FAMILY_SUPABASE_KEY in the TDZ,
 // even if a legacy/local cache entry causes a later startup step to fail.
@@ -434,15 +435,45 @@ var betaSession=null,betaParent=null,betaChild=null;
 var betaResetCooldownTimer=null;
 let cloudTimer=null,cloudBusy=false,cloudQueued=false,cloudSuppressPush=false,cloudConflictState=null;
 const ROLLING_BACKUP_PREFIXES=[
-  'pet_checkin_v1_backup_pre_cloud_autopull_',
-  'pet_checkin_v1_backup_pre_cloud_restore_',
-  'pet_checkin_v1_backup_pre_cloud_snapshot_restore_',
-  'pet_checkin_v1_backup_pre_word_delete_',
-  'pet_checkin_v1_backup_pre_structure_delete_',
-  'pet_checkin_v1_backup_pre_import_',
-  'pet_checkin_v1_corrupt_'
+  'pet_family_backup_pre_cloud_autopull_',
+  'pet_family_backup_pre_cloud_restore_',
+  'pet_family_backup_pre_cloud_snapshot_restore_',
+  'pet_family_backup_pre_word_delete_',
+  'pet_family_backup_pre_structure_delete_',
+  'pet_family_backup_pre_import_',
+  'pet_family_backup_pre_reset_',
+  'pet_family_corrupt_'
 ];
 const ROLLING_BACKUP_KEEP=2;
+// One-time, copy-verify-delete migration. Legacy recovery credentials are archived,
+// never activated as Family cloud sync. Existing current account data is untouched.
+function migrateLegacyFamilyStorageOnce(){
+  const legacy='pet_'+'checkin_';
+  const names=['cloud_endpoint_pref','cloud_recovery_key','cloud_enabled','cloud_meta'];
+  const oldBackup='pet_'+'checkin_v1_backup_pre_';
+  const oldCorrupt='pet_'+'checkin_v1_corrupt_';
+  const keys=[];
+  for(let i=0;i<localStorage.length;i++)keys.push(localStorage.key(i));
+  let success=true;
+  for(const oldKey of keys){
+    let newKey='';
+    if(oldKey.startsWith(oldBackup))newKey='pet_family_backup_pre_'+oldKey.slice(oldBackup.length);
+    else if(oldKey.startsWith(oldCorrupt))newKey='pet_family_corrupt_'+oldKey.slice(oldCorrupt.length);
+    else if(names.some(x=>oldKey===legacy+x))newKey='pet_family_legacy_'+oldKey.slice(legacy.length);
+    if(!newKey)continue;
+    try{
+      const value=localStorage.getItem(oldKey);
+      if(value===null)continue;
+      const previous=localStorage.getItem(newKey);
+      if(previous!==null&&previous!==value){success=false;continue}
+      if(previous===null)localStorage.setItem(newKey,value);
+      if(localStorage.getItem(newKey)!==value)throw new Error('备份校验失败');
+      localStorage.removeItem(oldKey);
+    }catch(e){success=false;console.warn('Family 旧存储迁移未完成，源键已保留',e)}
+  }
+  return success;
+}
+
 function rollingBackupKeys(){let out=[];for(let i=0;i<localStorage.length;i++){let k=localStorage.key(i);if(!k||!ROLLING_BACKUP_PREFIXES.some(p=>k.startsWith(p)))continue;let m=k.match(/(\d{10,})$/),ts=m?Number(m[1]):0;out.push({key:k,ts})}return out.sort((a,b)=>b.ts-a.ts)}
 function pruneRollingBackups(keep=ROLLING_BACKUP_KEEP){let a=rollingBackupKeys(),removed=0;for(const x of a.slice(Math.max(0,keep))){try{localStorage.removeItem(x.key);removed++}catch(e){}}return removed}
 function isQuotaError(e){return !!e&&(e.name==='QuotaExceededError'||e.name==='NS_ERROR_DOM_QUOTA_REACHED'||e.code===22||e.code===1014)}
@@ -515,7 +546,7 @@ function scheduleCloudSync(markDirty=true){if(cloudSuppressPush||!cloudIsEnabled
 async function enableCloudSync(){if(cloudIsEnabled()){renderCloudUI();return cloudSmartSync(true)}let key=randomRecoveryKey();localStorage.setItem(CLOUD_KEY_STORAGE,key);localStorage.setItem(CLOUD_ENABLED_STORAGE,'1');renderCloudUI();setCloudStatus('pending','正在建立第一份云端备份…');try{let j=await cloudRequest('init',{schema_version:'1',app_version:APP_VERSION,payload:state,source_device:navigator.userAgent.slice(0,180)});saveCloudMeta({profile_id:j.profile_id,last_sync:j.synced_at,last_hash:j.payload_hash,local_dirty:false,local_changed_at:null});setCloudStatus('ok','云端备份已启用 · '+new Date(j.synced_at).toLocaleString());renderCloudUI();alert('云端备份已启用。请务必把“恢复码”复制或下载到 iCloud Drive / 文件 App。恢复码丢失后，云端档案无法在新设备上找回。')}catch(e){localStorage.removeItem(CLOUD_ENABLED_STORAGE);setCloudStatus('bad','启用失败：'+e.message);renderCloudUI();alert('云端备份启用失败：'+e.message)}}
 async function cloudPushCore(showMessage=false,expectedHash=null){let j=await cloudRequest('push',{schema_version:'1',app_version:APP_VERSION,payload:state,source_device:navigator.userAgent.slice(0,180),expected_hash:expectedHash||null});saveCloudMeta({last_sync:j.synced_at,last_hash:j.payload_hash,local_dirty:false,local_changed_at:null});hideCloudConflict();setCloudStatus('ok','已同步 · '+new Date(j.synced_at).toLocaleString());if(showMessage)alert(j.unchanged?'云端已经是最新数据。':'同步完成。');return true}
 async function cloudPush(showMessage=false,expectedHashOverride=null){if(!cloudIsEnabled()){if(showMessage)alert('请先启用云端备份。');return false}if(cloudBusy){cloudQueued=true;return false}cloudBusy=true;setCloudStatus('pending','正在安全同步…');try{return await cloudPushCore(showMessage,expectedHashOverride||cloudMeta().last_hash||null)}catch(e){if(e.status===409&&e.data?.state){showCloudConflict(e.data.state,'云端在本机准备上传后又发生了变化。');return false}setCloudStatus('bad','同步失败，保留本地数据 · '+e.message);if(showMessage)alert('云端同步失败：'+e.message+'。本地数据没有受到影响。');return false}finally{cloudBusy=false;if(cloudQueued){cloudQueued=false;setTimeout(()=>cloudSmartSync(false),250)}}}
-async function applyRemoteState(remote,label='已自动采用云端最新数据'){if(!remote?.payload)return false;requireLocalSafetyBackup('pet_checkin_v1_backup_pre_cloud_autopull_',state);cloudSuppressPush=true;try{state=migrateState(remote.payload);localStorage.setItem(KEY,JSON.stringify(state));saveCloudMeta({last_sync:remote.updated_at,last_hash:remote.payload_hash,local_dirty:false,local_changed_at:null});hideCloudConflict();renderAll();setCloudStatus('ok',label+' · '+new Date(remote.updated_at).toLocaleString());return true}finally{cloudSuppressPush=false}}
+async function applyRemoteState(remote,label='已自动采用云端最新数据'){if(!remote?.payload)return false;requireLocalSafetyBackup('pet_family_backup_pre_cloud_autopull_',state);cloudSuppressPush=true;try{state=migrateState(remote.payload);localStorage.setItem(KEY,JSON.stringify(state));saveCloudMeta({last_sync:remote.updated_at,last_hash:remote.payload_hash,local_dirty:false,local_changed_at:null});hideCloudConflict();renderAll();setCloudStatus('ok',label+' · '+new Date(remote.updated_at).toLocaleString());return true}finally{cloudSuppressPush=false}}
 function showCloudConflict(remote,reason='检测到云端和本机都发生了变化。'){cloudConflictState=remote;let box=document.getElementById('cloudConflict'),txt=document.getElementById('cloudConflictText');if(box)box.classList.remove('hidden');if(txt){let cw=remote?.payload?.words?.length??'—',ct=remote?.payload?.tests?.length??'—',lw=state.words?.length||0,lt=state.tests?.length||0;txt.textContent=`${reason} 云端：${cw} 个词 / ${ct} 条记录（${remote?.updated_at?new Date(remote.updated_at).toLocaleString():'时间未知'}）；本机：${lw} 个词 / ${lt} 条记录。自动同步已暂停，请选择保留哪一边。`}setCloudStatus('bad','同步冲突：已暂停自动覆盖')}
 function hideCloudConflict(){cloudConflictState=null;document.getElementById('cloudConflict')?.classList.add('hidden')}
 function dismissCloudConflict(){document.getElementById('cloudConflict')?.classList.add('hidden');setCloudStatus('bad','同步冲突尚未处理；本机数据仍安全保留')}
@@ -544,17 +575,18 @@ async function cloudSmartSync(showMessage=false){if(!cloudIsEnabled()){if(showMe
   }catch(e){setCloudStatus('bad','检查同步失败，本机数据不受影响 · '+e.message);if(showMessage)alert('同步检查失败：'+e.message+'。本机数据没有受到影响。');return false}finally{cloudBusy=false;if(cloudQueued){cloudQueued=false;setTimeout(()=>cloudSmartSync(false),250)}}}
 function copyRecoveryCode(){let k=cloudKey();if(!k)return;navigator.clipboard?.writeText(k).then(()=>alert('恢复码已复制。')).catch(()=>prompt('请复制恢复码：',k))}
 function downloadRecoveryCode(){let k=cloudKey();if(!k)return;let txt='WordLoop Family 云端恢复码\n\n'+k+'\n\n请妥善保存。此恢复码可用于在本地数据丢失或更换设备后恢复云端学习档案。\n';let blob=new Blob([txt],{type:'text/plain;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='WordLoop_Family_云端恢复码.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),300)}
-async function restoreFromCloud(){let key=prompt('请输入 WordLoop Family 云端恢复码：',cloudKey()||'');if(!key)return;key=key.trim();if(key.length<24)return alert('恢复码格式不正确。');setCloudStatus('pending','正在读取云端档案…');try{let j=await cloudRequest('pull',{},key);if(!j.state?.payload)throw new Error('云端没有可恢复的数据');let incoming=migrateState(j.state.payload),localWords=state.words?.length||0,localTests=state.tests?.length||0,cloudWords=incoming.words?.length||0,cloudTests=incoming.tests?.length||0;if(!confirm(`云端档案：${cloudWords} 个词、${cloudTests} 条测试记录。\n当前本机：${localWords} 个词、${localTests} 条测试记录。\n\n继续后会先保存当前本机快照，再用云端档案替换当前数据。是否继续？`)){renderCloudUI();return}requireLocalSafetyBackup('pet_checkin_v1_backup_pre_cloud_restore_',state);cloudSuppressPush=true;state=incoming;localStorage.setItem(KEY,JSON.stringify(state));localStorage.setItem(CLOUD_KEY_STORAGE,key);localStorage.setItem(CLOUD_ENABLED_STORAGE,'1');saveCloudMeta({last_sync:j.state.updated_at,last_hash:j.state.payload_hash,local_dirty:false,local_changed_at:null});hideCloudConflict();renderAll();setCloudStatus('ok','已从云端恢复 · '+new Date(j.state.updated_at).toLocaleString());alert('云端恢复完成。本次恢复前的本机数据也已经另存快照。')}catch(e){setCloudStatus('bad','云端恢复失败 · '+e.message);alert('恢复失败：'+e.message)}finally{cloudSuppressPush=false;renderCloudUI()}}
+async function restoreFromCloud(){let key=prompt('请输入 WordLoop Family 云端恢复码：',cloudKey()||'');if(!key)return;key=key.trim();if(key.length<24)return alert('恢复码格式不正确。');setCloudStatus('pending','正在读取云端档案…');try{let j=await cloudRequest('pull',{},key);if(!j.state?.payload)throw new Error('云端没有可恢复的数据');let incoming=migrateState(j.state.payload),localWords=state.words?.length||0,localTests=state.tests?.length||0,cloudWords=incoming.words?.length||0,cloudTests=incoming.tests?.length||0;if(!confirm(`云端档案：${cloudWords} 个词、${cloudTests} 条测试记录。\n当前本机：${localWords} 个词、${localTests} 条测试记录。\n\n继续后会先保存当前本机快照，再用云端档案替换当前数据。是否继续？`)){renderCloudUI();return}requireLocalSafetyBackup('pet_family_backup_pre_cloud_restore_',state);cloudSuppressPush=true;state=incoming;localStorage.setItem(KEY,JSON.stringify(state));localStorage.setItem(CLOUD_KEY_STORAGE,key);localStorage.setItem(CLOUD_ENABLED_STORAGE,'1');saveCloudMeta({last_sync:j.state.updated_at,last_hash:j.state.payload_hash,local_dirty:false,local_changed_at:null});hideCloudConflict();renderAll();setCloudStatus('ok','已从云端恢复 · '+new Date(j.state.updated_at).toLocaleString());alert('云端恢复完成。本次恢复前的本机数据也已经另存快照。')}catch(e){setCloudStatus('bad','云端恢复失败 · '+e.message);alert('恢复失败：'+e.message)}finally{cloudSuppressPush=false;renderCloudUI()}}
 async function createCloudSnapshot(type='manual',label='Manual snapshot'){if(!cloudIsEnabled())return alert('请先启用云端备份。');try{let ok=await cloudSmartSync(false);if(!ok)return alert('当前尚未完成安全同步，请先处理同步冲突后再建立快照。');let j=await cloudRequest('snapshot',{snapshot_type:type,label});alert('云端快照已建立：'+new Date(j.snapshot.created_at).toLocaleString());loadCloudSnapshots()}catch(e){alert('建立云端快照失败：'+e.message)}}
 async function loadCloudSnapshots(){if(!cloudIsEnabled())return alert('请先启用云端备份。');let wrap=document.getElementById('cloudSnapshots'),list=document.getElementById('cloudSnapshotList');wrap?.classList.remove('hidden');if(list)list.innerHTML='<div class="small">正在读取…</div>';try{let j=await cloudRequest('snapshots',{limit:20});if(list)list.innerHTML=(j.snapshots||[]).map(x=>`<div class="snapshotRow"><div><b>${x.snapshot_type}</b> · ${new Date(x.created_at).toLocaleString()}<div class="small">${esc(x.label||'')} · v${esc(x.app_version||'')}</div></div><button class="gray" style="padding:7px 9px;font-size:12px" onclick="restoreCloudSnapshot(${x.id})">恢复</button></div>`).join('')||'<div class="small">暂无历史快照。</div>'}catch(e){if(list)list.innerHTML='<div class="small">读取失败：'+esc(e.message)+'</div>'}}
-async function restoreCloudSnapshot(id){if(!confirm('确定把云端主档恢复到这个历史版本吗？恢复前会自动保存当前云端版本。'))return;try{let j=await cloudRequest('restore',{snapshot_id:id});requireLocalSafetyBackup('pet_checkin_v1_backup_pre_cloud_snapshot_restore_',state);cloudSuppressPush=true;state=migrateState(j.state.payload);localStorage.setItem(KEY,JSON.stringify(state));saveCloudMeta({last_sync:j.state.updated_at,last_hash:j.state.payload_hash,local_dirty:false,local_changed_at:null});hideCloudConflict();renderAll();alert('历史版本已恢复。')}catch(e){alert('恢复历史版本失败：'+e.message)}finally{cloudSuppressPush=false;renderCloudUI()}}
+async function restoreCloudSnapshot(id){if(!confirm('确定把云端主档恢复到这个历史版本吗？恢复前会自动保存当前云端版本。'))return;try{let j=await cloudRequest('restore',{snapshot_id:id});requireLocalSafetyBackup('pet_family_backup_pre_cloud_snapshot_restore_',state);cloudSuppressPush=true;state=migrateState(j.state.payload);localStorage.setItem(KEY,JSON.stringify(state));saveCloudMeta({last_sync:j.state.updated_at,last_hash:j.state.payload_hash,local_dirty:false,local_changed_at:null});hideCloudConflict();renderAll();alert('历史版本已恢复。')}catch(e){alert('恢复历史版本失败：'+e.message)}finally{cloudSuppressPush=false;renderCloudUI()}}
 function renderCloudUI(){let enabled=cloudIsEnabled(),k=cloudKey(),m=cloudMeta(),wrap=document.getElementById('cloudRecoveryWrap'),code=document.getElementById('cloudRecoveryCode'),eb=document.getElementById('cloudEnableBtn'),sb=document.getElementById('cloudSyncBtn'),ss=document.getElementById('cloudSnapshotBtn'),pu=document.getElementById('cloudPreUpgradeBtn'),hb=document.getElementById('cloudHistoryBtn');if(wrap)wrap.classList.toggle('hidden',!enabled);if(code)code.textContent=k;if(eb){eb.textContent=enabled?'云端备份已启用':'启用云端备份';eb.disabled=enabled;eb.style.opacity=enabled?'.55':'1'}[sb,ss,pu,hb].forEach(x=>x&&x.classList.toggle('hidden',!enabled));if(enabled){if(cloudConflictState)setCloudStatus('bad','同步冲突：等待家长处理');else if(m.local_dirty)setCloudStatus('pending','本机有尚未同步的变化');else if(m.last_sync)setCloudStatus('ok','上次同步 · '+new Date(m.last_sync).toLocaleString());else setCloudStatus('pending','云端已启用，等待首次同步…')}else setCloudStatus('','尚未启用')}
 window.addEventListener('online',()=>cloudSmartSync(false));
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&cloudIsEnabled())cloudSmartSync(false)});
 window.addEventListener('pageshow',()=>{if(cloudIsEnabled())setTimeout(()=>cloudSmartSync(false),250)});
 
 const SMART_TOTAL=20, SMART_E2Z_BASE=8, SMART_Z2E_BASE=4, SMART_STANDALONE_STRUCTURE_BASE=1;
-const SEED={"words":[{"en":"persuade","zh":"说服","note":"persuade somebody to do something","status":"focus"},{"en":"support","zh":"支持；帮助","note":"support somebody / a project","status":"focus"},{"en":"technique","zh":"技巧；技术","note":"a useful technique","status":"maintenance"},{"en":"organiser","zh":"组织者","note":"the event organiser","status":"maintenance"},{"en":"concentrate","zh":"集中注意力","note":"concentrate on something","status":"maintenance"},{"en":"immediately","zh":"立即；马上","note":"answer immediately","status":"active"},{"en":"discover","zh":"发现；发觉","note":"discover a better way","status":"active"},{"en":"rather than","zh":"而不是；而非","note":"rather than giving up","status":"active"},{"en":"feedback","zh":"反馈；意见","note":"ask for feedback","status":"active"},{"en":"expect","zh":"预期；预计","note":"expect something to happen","status":"active"},{"en":"prefer","zh":"更喜欢","note":"prefer A to B","status":"active"},{"en":"approach","zh":"方法；处理方式","note":"try a different approach","status":"active"},{"en":"attempt","zh":"尝试；试图","note":"the first attempt","status":"active"},{"en":"ordinary","zh":"普通的；平常的","note":"an ordinary subject","status":"active"},{"en":"instead","zh":"反而；改为；代替","note":"Instead, ... / instead of doing","status":"active"},{"en":"exhibition","zh":"展览；展览会","note":"visit an exhibition","status":"maintenance"},{"en":"competition","zh":"比赛；竞争","note":"enter a competition","status":"maintenance"},{"en":"countryside","zh":"乡村；农村地区","note":"in the countryside","status":"maintenance"},{"en":"waterfall","zh":"瀑布","note":"","status":"maintenance"},{"en":"shark","zh":"鲨鱼","note":"","status":"maintenance"}],"structures":[{"title":"instead of ...","zh":"而不是做……","example":"Instead of staying at home, we went for a walk."},{"title":"as many ... as","zh":"和……一样多","example":"There were as many girls as boys."},{"title":"written by / made by / designed by","zh":"由……写/制作/设计","example":"The story was written by a teenager."},{"title":"hear of / hear about","zh":"听说过 / 听到关于……的消息","example":"Have you ever heard of this writer?"},{"title":"because ...","zh":"因为 + 句子","example":"I stayed home because I was ill."},{"title":"because of ...","zh":"因为 + 名词","example":"The match stopped because of the rain."},{"title":"so ... that","zh":"如此……以至于……","example":"It was so interesting that I read it twice."},{"title":"should ...","zh":"should 后用动词原形","example":"What should I do?"},{"title":"such as ...","zh":"例如做……","example":"We tried activities such as playing football."},{"title":"make sure not to ...","zh":"确保不要做……","example":"Make sure not to forget your ticket."}]};
+// Family has no bundled child vocabulary. Existing account payloads are never reseeded.
+const SEED={words:[],structures:[]};
 
 const CURATED_LINKED_STRUCTURES=[
   {word:'persuade',title:'persuade ... to ...',zh:'说服某人做某事',example:'She persuaded him to join the club.',aliases:['persuade somebody to do something'],priority:'key',replaceE2Z:true},
@@ -584,7 +616,7 @@ const CURATED_LINKED_STRUCTURES=[
 const REASONS=['遗忘','词义混淆','词形变化','听觉不识别','发音问题','操作延迟','其他'];
 const MASTERY_LABEL={mastered:'已掌握',unstable:'认识但不稳定',unmastered:'未掌握'};
 function esc(s){return String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]))}
-function init(){let now=Date.now();return{version:'0.3.1',words:SEED.words.map((w,i)=>migrateWord({...w,id:'w'+i,due:now,history:[]})),structures:SEED.structures.map((s,i)=>migrateStructure({...s},i,now)),tests:[],dailyPlans:{},smartPlans:{},settings:{voiceLang:'en-GB',voiceRate:.90},meta:{createdAt:now,migratedTo020At:now,migratedTo021At:now,migratedTo022At:now,migratedTo030At:now}}}
+function init(){let now=Date.now();return{version:APP_VERSION,words:[],structures:[],tests:[],dailyPlans:{},smartPlans:{},settings:{voiceLang:'en-GB',voiceRate:.90},meta:{product:FAMILY_PRODUCT,createdAt:now,migratedTo020At:now,migratedTo021At:now,migratedTo022At:now,migratedTo030At:now}}}
 const FAMILY_FORMS={
   ignore:['ignore','ignored','ignoring'],
   label:['label','labels','labelled','labeled','labelling','labeling'],
@@ -711,7 +743,7 @@ function checkinDates(){return Array.isArray(state?.meta?.checkinDates)?state.me
 function checkinCount(){return new Set(checkinDates()).size}
 function checkedInToday(){return checkinDates().includes(localDateKey())}
 
-function migrateState(s){if(!s||typeof s!=='object')s=init();s.words=Array.isArray(s.words)?s.words:[];s.words=s.words.filter(w=>w&&typeof w==='object'&&(w.en||w.zh)).map(migrateWord);s.structures=Array.isArray(s.structures)?s.structures:SEED.structures;s.structures=s.structures.filter(x=>x&&typeof x==='object'&&(x.title||x.en||x.zh)).map((x,i)=>migrateStructure(x,i));repairStructureWordLinks(s);ensureCuratedLinkedStructures(s);repairStructureWordLinks(s);s.tests=Array.isArray(s.tests)?s.tests.filter(t=>t&&typeof t==='object'):[];s.tests=s.tests.map((t,i)=>normalizeTestRecord(t,i));s.dailyPlans=s.dailyPlans&&typeof s.dailyPlans==='object'?s.dailyPlans:{};for(const d of Object.keys(s.dailyPlans)){if(Array.isArray(s.dailyPlans[d])){let old=[...s.dailyPlans[d]];s.dailyPlans[d]={e2z:[...old],z2e:[...old]}}else{s.dailyPlans[d]=s.dailyPlans[d]||{};s.dailyPlans[d].e2z=Array.isArray(s.dailyPlans[d].e2z)?s.dailyPlans[d].e2z:[];s.dailyPlans[d].z2e=Array.isArray(s.dailyPlans[d].z2e)?s.dailyPlans[d].z2e:[]}}s.smartPlans=s.smartPlans&&typeof s.smartPlans==='object'?s.smartPlans:{};for(const d of Object.keys(s.smartPlans)){let p=s.smartPlans[d]||{};p.e2z=Array.isArray(p.e2z)?[...new Set(p.e2z)]:[];p.z2e=Array.isArray(p.z2e)?[...new Set(p.z2e)]:[];p.structures=Array.isArray(p.structures)?[...new Set(p.structures)]:[];p.generatedAt=Number.isFinite(+p.generatedAt)?+p.generatedAt:0;s.smartPlans[d]=p}s.settings=s.settings||{};if(!s.settings.voiceLang)s.settings.voiceLang='en-GB';if(!Number.isFinite(+s.settings.voiceRate))s.settings.voiceRate=.90;s.version=APP_VERSION;s.meta=s.meta||{};s.meta.migratedTo020At=s.meta.migratedTo020At||Date.now();s.meta.migratedTo021At=s.meta.migratedTo021At||Date.now();s.meta.migratedTo022At=s.meta.migratedTo022At||Date.now();s.meta.migratedTo030At=s.meta.migratedTo030At||Date.now();
+function migrateState(s){if(!s||typeof s!=='object')s=init();s.words=Array.isArray(s.words)?s.words:[];s.words=s.words.filter(w=>w&&typeof w==='object'&&(w.en||w.zh)).map(migrateWord);s.structures=Array.isArray(s.structures)?s.structures:[];s.structures=s.structures.filter(x=>x&&typeof x==='object'&&(x.title||x.en||x.zh)).map((x,i)=>migrateStructure(x,i));repairStructureWordLinks(s);ensureCuratedLinkedStructures(s);repairStructureWordLinks(s);s.tests=Array.isArray(s.tests)?s.tests.filter(t=>t&&typeof t==='object'):[];s.tests=s.tests.map((t,i)=>normalizeTestRecord(t,i));s.dailyPlans=s.dailyPlans&&typeof s.dailyPlans==='object'?s.dailyPlans:{};for(const d of Object.keys(s.dailyPlans)){if(Array.isArray(s.dailyPlans[d])){let old=[...s.dailyPlans[d]];s.dailyPlans[d]={e2z:[...old],z2e:[...old]}}else{s.dailyPlans[d]=s.dailyPlans[d]||{};s.dailyPlans[d].e2z=Array.isArray(s.dailyPlans[d].e2z)?s.dailyPlans[d].e2z:[];s.dailyPlans[d].z2e=Array.isArray(s.dailyPlans[d].z2e)?s.dailyPlans[d].z2e:[]}}s.smartPlans=s.smartPlans&&typeof s.smartPlans==='object'?s.smartPlans:{};for(const d of Object.keys(s.smartPlans)){let p=s.smartPlans[d]||{};p.e2z=Array.isArray(p.e2z)?[...new Set(p.e2z)]:[];p.z2e=Array.isArray(p.z2e)?[...new Set(p.z2e)]:[];p.structures=Array.isArray(p.structures)?[...new Set(p.structures)]:[];p.generatedAt=Number.isFinite(+p.generatedAt)?+p.generatedAt:0;s.smartPlans[d]=p}s.settings=s.settings||{};if(!s.settings.voiceLang)s.settings.voiceLang='en-GB';if(!Number.isFinite(+s.settings.voiceRate))s.settings.voiceRate=.90;s.version=APP_VERSION;s.meta=s.meta&&typeof s.meta==='object'&&!Array.isArray(s.meta)?s.meta:{};s.meta.product=FAMILY_PRODUCT;s.meta.migratedTo020At=s.meta.migratedTo020At||Date.now();s.meta.migratedTo021At=s.meta.migratedTo021At||Date.now();s.meta.migratedTo022At=s.meta.migratedTo022At||Date.now();s.meta.migratedTo030At=s.meta.migratedTo030At||Date.now();
 if(!s.meta.repairedManualRtZero_v048){s.meta.repairedManualRtZero_v048=Date.now()}
 rebuildCheckinDates(s);
 if(!s.meta.checkinBackfill_v051){s.meta.checkinBackfill_v051=Date.now()}
@@ -747,7 +779,7 @@ function mergeFromSnapshot(base,snapshot){
 }
 function wordByIdFrom(s,id){return (s.words||[]).find(w=>w.id===id)}
 function snapshotObject(){let raw=localStorage.getItem(PRE_V050_KEY)||localStorage.getItem(PRE_V030_KEY)||localStorage.getItem(PRE_KEY);if(!raw)return null;try{return JSON.parse(raw)}catch(e){return null}}
-function recoverMissingFromSnapshot(showMessage=false){let snap=snapshotObject();if(!snap){if(showMessage)alert('没有找到可用的升级前本机快照。');return{words:0,tests:0,plans:0,wordData:0}}let out=mergeFromSnapshot(state,snap);state=out.state;refreshSmartPlan(localDateKey());state.version=APP_VERSION;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync();renderAll();let r=out.report;if(showMessage)alert(`恢复检查完成：补回 ${r.words} 个缺失词、${r.tests} 条测试记录、${r.plans} 个清单项目；并恢复 ${r.wordData} 处较新的掌握/排期数据。`);return r}
+function recoverMissingFromSnapshot(showMessage=false){let snap=snapshotObject();if(!snap){if(showMessage)alert('没有找到可用的升级前本机快照。');return{words:0,tests:0,plans:0,wordData:0}}let out=mergeFromSnapshot(state,snap);state=out.state;refreshSmartPlan(localDateKey());state.version=APP_VERSION;state.meta=state.meta||{};state.meta.product=FAMILY_PRODUCT;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync();renderAll();let r=out.report;if(showMessage)alert(`恢复检查完成：补回 ${r.words} 个缺失词、${r.tests} 条测试记录、${r.plans} 个清单项目；并恢复 ${r.wordData} 处较新的掌握/排期数据。`);return r}
 function syncLegacyWord(w){let vals=[w.mastery?.e2z,w.mastery?.z2e];w.status=vals.includes('unmastered')?'focus':vals.includes('unstable')?'active':'maintenance';let dues=['e2z','z2e'].map(d=>+w.review?.[d]?.due).filter(Number.isFinite);w.due=dues.length?Math.min(...dues):Date.now();return w}
 const rollingBackupCleanupAtBoot=pruneRollingBackups(ROLLING_BACKUP_KEEP);
 // v0.5.12.5: before login, use a clean in-memory state only.
@@ -763,7 +795,7 @@ try{
   state=init();
   bootRecoveryReport={fallback:false,error:String(e)};
 }
-function save(render=true){state.words.forEach(syncLegacyWord);refreshSmartPlan(localDateKey());state.version=APP_VERSION;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync();if(render)renderAll()}
+function save(render=true){state.words.forEach(syncLegacyWord);refreshSmartPlan(localDateKey());state.version=APP_VERSION;state.meta=state.meta||{};state.meta.product=FAMILY_PRODUCT;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync();if(render)renderAll()}
 function avg(a){let b=a.filter(Number.isFinite);return b.length?b.reduce((x,y)=>x+y,0)/b.length:NaN}
 function pct(x){return isFinite(x)?Math.round(x*100)+'%':'—'}
 function fmtDate(ts){if(!ts)return'—';let d=new Date(ts),p=n=>String(n).padStart(2,'0');return`${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`}
@@ -896,7 +928,7 @@ let editingWordId=null;
 function openWordEditor(id){let w=wordById(id);if(!w)return;editingWordId=id;editWordTitle.textContent='正在编辑：'+w.en;editWordEn.value=w.en||'';editWordZh.value=w.zh||'';editWordNote.value=w.note||'';editWordFamily.value=w.family||'';wordModal.classList.remove('hidden');setTimeout(()=>editWordEn.focus(),50)}
 function closeWordEditor(){editingWordId=null;wordModal.classList.add('hidden')}
 function saveWordEdit(){let w=wordById(editingWordId);if(!w)return closeWordEditor();let en=editWordEn.value.trim(),zh=editWordZh.value.trim(),note=editWordNote.value.trim(),family=editWordFamily.value.trim().toLowerCase();if(!en||!zh)return alert('英文和中文意思都不能为空。');let dup=state.words.find(x=>x.id!==w.id&&normWord(x.en)===normWord(en));if(dup)return alert('词汇池里已经有 “'+dup.en+'” 这个词，请不要改成重复词条。');let oldEn=w.en;w.en=en;w.zh=zh;w.note=note;w.family=family;if(oldEn!==en){state.tests.forEach(t=>{if(t.wordId===w.id)t.en=en});w.history.forEach(h=>{h.en=en});linkedStructuresForWord(w.id).forEach(s=>s.linkedWordEn=en)}syncLegacyWord(w);save();closeWordEditor();renderWords();renderStructures();renderHistory();renderReview();renderHome()}
-function deleteWord(id){let w=wordById(id);if(!w)return;let n=state.tests.filter(t=>t.wordId===id).length,linked=linkedStructuresForWord(id),linkedTests=state.tests.filter(t=>t.itemType==='structure'&&linked.some(s=>s.id===t.structureId)).length,msg=`确定删除 “${w.en} / ${w.zh}” 吗？`+(n?`\n\n这个词已有 ${n} 条单词测试记录。`:`\n\n这个词暂无单词测试记录。`)+(linked.length?`\n关联固定搭配 ${linked.length} 条，也会一起删除；其中相关搭配测试记录 ${linkedTests} 条。`:'')+`\n\n确认后会从人工清单和智能计划中移除。删除前会自动保存一份本机完整快照。`;if(!confirm(msg))return;try{requireLocalSafetyBackup('pet_checkin_v1_backup_pre_word_delete_',state)}catch(e){alert(e.message);return}let linkedIds=new Set(linked.map(s=>s.id));state.tests=state.tests.filter(t=>t.wordId!==id&&!linkedIds.has(t.structureId));for(const d of Object.keys(state.dailyPlans||{})){let p=state.dailyPlans[d]||{};p.e2z=(p.e2z||[]).filter(x=>x!==id);p.z2e=(p.z2e||[]).filter(x=>x!==id)}for(const d of Object.keys(state.smartPlans||{})){let p=state.smartPlans[d]||{};p.e2z=(p.e2z||[]).filter(x=>x!==id);p.z2e=(p.z2e||[]).filter(x=>x!==id);p.structures=(p.structures||[]).filter(x=>!linkedIds.has(x))}state.structures=state.structures.filter(x=>!linkedIds.has(x.id));state.words=state.words.filter(x=>x.id!==id);if(reviewSessionWordId===id)resetReviewSession(true);save();renderWords();renderStructures();renderHistory();renderReview();renderHome();syncTestSourceUI();alert('已删除 “'+w.en+'” 及其关联固定搭配。删除前本机快照已保留。')}
+function deleteWord(id){let w=wordById(id);if(!w)return;let n=state.tests.filter(t=>t.wordId===id).length,linked=linkedStructuresForWord(id),linkedTests=state.tests.filter(t=>t.itemType==='structure'&&linked.some(s=>s.id===t.structureId)).length,msg=`确定删除 “${w.en} / ${w.zh}” 吗？`+(n?`\n\n这个词已有 ${n} 条单词测试记录。`:`\n\n这个词暂无单词测试记录。`)+(linked.length?`\n关联固定搭配 ${linked.length} 条，也会一起删除；其中相关搭配测试记录 ${linkedTests} 条。`:'')+`\n\n确认后会从人工清单和智能计划中移除。删除前会自动保存一份本机完整快照。`;if(!confirm(msg))return;try{requireLocalSafetyBackup('pet_family_backup_pre_word_delete_',state)}catch(e){alert(e.message);return}let linkedIds=new Set(linked.map(s=>s.id));state.tests=state.tests.filter(t=>t.wordId!==id&&!linkedIds.has(t.structureId));for(const d of Object.keys(state.dailyPlans||{})){let p=state.dailyPlans[d]||{};p.e2z=(p.e2z||[]).filter(x=>x!==id);p.z2e=(p.z2e||[]).filter(x=>x!==id)}for(const d of Object.keys(state.smartPlans||{})){let p=state.smartPlans[d]||{};p.e2z=(p.e2z||[]).filter(x=>x!==id);p.z2e=(p.z2e||[]).filter(x=>x!==id);p.structures=(p.structures||[]).filter(x=>!linkedIds.has(x))}state.structures=state.structures.filter(x=>!linkedIds.has(x.id));state.words=state.words.filter(x=>x.id!==id);if(reviewSessionWordId===id)resetReviewSession(true);save();renderWords();renderStructures();renderHistory();renderReview();renderHome();syncTestSourceUI();alert('已删除 “'+w.en+'” 及其关联固定搭配。删除前本机快照已保留。')}
 
 function cleanFastTest(t){return effectiveResult(t)==='correct'&&effectiveRt(t)<=3&&!(t.replays||0)&&t.pronunciation!=='practice'&&t.pronunciation!=='needs_practice'}
 function directionZh(d){return d==='z2e'?'中→英':'英→中'}
@@ -961,7 +993,7 @@ function relinkStructure(id){let s=structureById(id);if(!s)return;let current=s.
 function renderStructureWordSelect(){if(typeof newStructureWord==='undefined'||!newStructureWord)return;let val=newStructureWord.value;newStructureWord.innerHTML='<option value="">不关联具体单词</option>'+[...state.words].sort((a,b)=>a.en.localeCompare(b.en)).map(w=>`<option value="${esc(w.id)}">${esc(w.en)} · ${esc(w.zh)}</option>`).join('');if([...newStructureWord.options].some(o=>o.value===val))newStructureWord.value=val}
 
 function editStructure(id){let s=structureById(id);if(!s)return;let en=prompt('英文固定搭配：',s.title);if(en===null)return;en=en.trim();if(!en)return alert('英文搭配不能为空。');if(state.structures.some(x=>x.id!==id&&normWord(x.title)===normWord(en)))return alert('搭配库里已经存在相同搭配。');let zh=prompt('中文意思：',s.zh);if(zh===null)return;zh=zh.trim();if(!zh)return alert('中文意思不能为空。');let example=prompt('例句（可留空，不参与判分）：',s.example||'');if(example===null)return;let old=s.title;s.title=en;s.zh=zh;s.example=example.trim();if(old!==en){state.tests.forEach(t=>{if(t.itemType==='structure'&&t.structureId===id)t.en=en});(s.history||[]).forEach(t=>t.en=en)}save();renderStructures();renderHistory();renderHome()}
-function deleteStructure(id){let s=structureById(id);if(!s)return;let n=state.tests.filter(t=>t.itemType==='structure'&&t.structureId===id).length;if(!confirm(`确定删除固定搭配 “${s.title}” 吗？${n?`\n\n同时会删除 ${n} 条相关测试记录。`:''}`))return;try{requireLocalSafetyBackup('pet_checkin_v1_backup_pre_structure_delete_',state)}catch(e){alert(e.message);return}state.tests=state.tests.filter(t=>!(t.itemType==='structure'&&t.structureId===id));for(const d of Object.keys(state.smartPlans||{})){let p=state.smartPlans[d]||{};p.structures=(p.structures||[]).filter(x=>x!==id)}state.structures=state.structures.filter(x=>x.id!==id);save();renderStructures();renderWords();renderHistory();renderHome();syncTestSourceUI()}
+function deleteStructure(id){let s=structureById(id);if(!s)return;let n=state.tests.filter(t=>t.itemType==='structure'&&t.structureId===id).length;if(!confirm(`确定删除固定搭配 “${s.title}” 吗？${n?`\n\n同时会删除 ${n} 条相关测试记录。`:''}`))return;try{requireLocalSafetyBackup('pet_family_backup_pre_structure_delete_',state)}catch(e){alert(e.message);return}state.tests=state.tests.filter(t=>!(t.itemType==='structure'&&t.structureId===id));for(const d of Object.keys(state.smartPlans||{})){let p=state.smartPlans[d]||{};p.structures=(p.structures||[]).filter(x=>x!==id)}state.structures=state.structures.filter(x=>x.id!==id);save();renderStructures();renderWords();renderHistory();renderHome();syncTestSourceUI()}
 function testStructureNow(id){let s=structureById(id);if(!s)return;session=[structureTestItem(s)];showSecById('test');currentMode='e2z';mode.value='e2z';cur=-1;records=[];result.classList.add('hidden');testCard.classList.remove('hidden');nextQ()}
 function renderStructures(){renderStructureWordSelect();let total=state.structures.length,due=dueStructures().length,key=state.structures.filter(s=>s.priority==='key').length,repl=state.structures.filter(s=>s.replaceE2Z&&s.linkedWordId).length,mastered=state.structures.filter(s=>s.mastery==='mastered').length,unstable=state.structures.filter(s=>s.mastery==='unstable').length,unmastered=state.structures.filter(s=>s.mastery==='unmastered').length,sp=smartPlanSummary();if(typeof structureSummary!=='undefined'&&structureSummary)structureSummary.innerHTML=`搭配总数 <b>${total}</b>｜重点/易考 <b>${key}</b>｜可替代单词 <b>${repl}</b>｜今天到期 <b>${due}</b><br><span class="small">今日测试红点还剩搭配 <b>${sp.s.length}</b> 个。搭配答对后，如勾选“替代”，会同时推进关联单词的英→中复习周期。</span>`;structureList.innerHTML=state.structures.length?state.structures.map(s=>{let h=(s.history||[]).slice(-5),ok=h.filter(x=>effectiveResult(x)!=='wrong'),r=avg(ok.map(effectiveRt)),w=s.linkedWordId?wordById(s.linkedWordId):null;return`<div class="listItem"><div><div><b style="font-size:17px">${esc(s.title)}</b> ${s.priority==='key'?'<span class="badge unmastered">重点/易考</span>':'<span class="badge family">普通搭配</span>'} ${masteryBadge(s.mastery)}</div><div>${esc(s.zh)}</div><div class="small">${w?`关联单词：<b>${esc(w.en)}</b>${s.replaceE2Z?' · <b>可替代英→中</b>':''}<br>`:''}${esc(s.example||'')}<br>下次测试：${dueText(s.review.due)} · 近5次正确/慢：${pct(h.length?ok.length/h.length:NaN)} · 有效平均 ${isFinite(r)?r.toFixed(1)+'s':'—'}</div><div class="wordActions"><button class="soft selectBtn" onclick="testStructureNow('${s.id}')">单独测一次</button><button class="primary selectBtn" onclick="editStructure('${s.id}')">编辑文字</button><button class="purple selectBtn" onclick="relinkStructure('${s.id}')">${w?'改关联':'关联单词'}</button><button class="gray selectBtn" onclick="toggleStructureKey('${s.id}')">${s.priority==='key'?'取消重点':'标记重点'}</button><button class="${s.replaceE2Z?'good':'gray'} selectBtn" onclick="toggleStructureReplace('${s.id}')">${s.replaceE2Z?'✓ 替代单词':'设为可替代'}</button><button class="bad selectBtn" onclick="deleteStructure('${s.id}')">删除</button></div></div></div>`}).join(''):'<div class="sub">还没有固定搭配。家长录入后，软件会自动安排进“测试”红点。</div>'}
 function addWord(){let en=newEn.value.trim(),zh=newZh.value.trim(),collEn=(newLinkedStructureEn?.value||'').trim(),collZh=(newLinkedStructureZh?.value||'').trim();if(!en||!zh)return alert('请填写英文和中文意思');if((collEn&&!collZh)||(!collEn&&collZh))return alert('固定搭配如果要录入，请把英文搭配和中文意思都填写完整。');if(state.words.some(w=>normWord(w.en)===normWord(en)))return alert('词汇池里已经有 “'+en+'” 了，可以直接编辑原词条。');if(collEn&&state.structures.some(s=>normWord(s.title)===normWord(collEn)))return alert('搭配库里已经有 “'+collEn+'” 了，请到“搭配”页关联现有条目。');let manual=normWord(newFamily.value),family=manual,g=manual?null:suggestFamily(en);if(!manual&&g){let msg=g.existing?`检测到 “${en}” 可能属于已有词族 “${g.root}”。
@@ -1014,10 +1046,27 @@ function renderStats(){let dirs=['e2z','z2e'],labels={e2z:'英→中',z2e:'中�
 function testVoice(){let u=new SpeechSynthesisUtterance('persuade');u.lang=state.settings.voiceLang;u.rate=state.settings.voiceRate;speechSynthesis.cancel();speechSynthesis.speak(u)}
 voiceLang.onchange=e=>{state.settings.voiceLang=e.target.value;save()};voiceRate.oninput=e=>{rateText.textContent=e.target.value;state.settings.voiceRate=+e.target.value;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync()};
 function downloadJson(obj,name){let blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),300)}
-function exportData(){downloadJson(state,'WordLoop_Family_学习数据_v0.5.12.5_'+new Date().toISOString().slice(0,10)+'.json')}
+function exportData(){downloadJson(state,'WordLoop_Family_学习数据_v0.5.12.6_'+new Date().toISOString().slice(0,10)+'.json')}
 function exportPreUpgradeBackup(){let x=localStorage.getItem(PRE_V053_KEY)||localStorage.getItem(PRE_V050_KEY)||localStorage.getItem(PRE_V030_KEY)||localStorage.getItem(PRE_KEY);if(!x)return alert('当前浏览器里没有升级前快照。');try{let name=localStorage.getItem(PRE_V053_KEY)?'WordLoop_Family_v0.5.3升级前快照.json':localStorage.getItem(PRE_V050_KEY)?'WordLoop_Family_v0.5升级前快照.json':localStorage.getItem(PRE_V030_KEY)?'WordLoop_Family_v0.3升级前快照.json':'WordLoop_Family_v0.2升级前快照.json';downloadJson(JSON.parse(x),name)}catch(e){alert('升级前快照损坏，无法导出')}}
-function importData(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{let incoming=JSON.parse(r.result);requireLocalSafetyBackup('pet_checkin_v1_backup_pre_import_',state);state=migrateState(incoming);save();alert('导入并迁移成功：原有词汇、历史、每日计划已保留。')}catch(x){alert('导入失败：'+x.message)}finally{e.target.value=''}};r.readAsText(f)}
-function resetAll(){if(confirm('确定清空所有训练记录吗？这会保留升级前快照，但会重置当前数据。')){state=init();save()}}
+function validateFamilyImport(incoming,filename=""){
+  if(!incoming||typeof incoming!=='object'||Array.isArray(incoming))throw new Error('不是有效的学习数据 JSON。');
+  // Reject known foreign formats, whether labelled in meta or carrying a root discriminator.
+  const product=incoming.meta?.product??incoming.product;
+  if(product!==undefined&&product!==FAMILY_PRODUCT)throw new Error('此备份属于其他产品，禁止导入 WordLoop Family。');
+  if(!Array.isArray(incoming.words)||!Array.isArray(incoming.structures))throw new Error('备份缺少 words / structures 数组，无法确认是 Family 学习数据。');
+  if(incoming.meta&&typeof incoming.meta!=='object')throw new Error('备份 meta 格式不正确。');
+  // Pre-product Family exports carried the family beta version and no product marker.
+  // Do not blindly accept unlabelled Lucas payloads: their schema overlaps.
+  if(product===undefined){
+    const hasFamilyEvidence=!!incoming.meta?.familyAccount||!!incoming.meta?.familyChildId||
+      !!incoming.meta?.familyVersion||!!incoming.meta?.familyBackup||
+      (typeof incoming.version==='string'&&/^0\.5\.(?:10|11|12)(?:\.|$)/.test(incoming.version)&&/^WordLoop[_ -]Family/i.test(filename));
+    if(!hasFamilyEvidence)throw new Error('该旧备份没有产品标识，无法确认来自 Family。请使用 Family v0.5.11–v0.5.12.x 导出的原始备份。');
+  }
+  return incoming;
+}
+function importData(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{let incoming=validateFamilyImport(JSON.parse(r.result),f.name);requireLocalSafetyBackup('pet_family_backup_pre_import_',state);state=migrateState(incoming);save();alert('导入并迁移成功：原有词汇、历史、每日计划已保留。')}catch(x){alert('导入失败：'+x.message)}finally{e.target.value=''}};r.readAsText(f)}
+function resetAll(){if(confirm('确定清空所有训练记录吗？这会保留升级前快照，但会重置当前数据。')){try{requireLocalSafetyBackup('pet_family_backup_pre_reset_',state)}catch(e){alert(e.message);return}state=init();save()}}
 function renderBackupInfo(){let pre53=localStorage.getItem(PRE_V053_KEY),pre50=localStorage.getItem(PRE_V050_KEY),pre30=localStorage.getItem(PRE_V030_KEY),pre20=localStorage.getItem(PRE_KEY),pre=pre53||pre50||pre30||pre20,recoverable=pre50||pre30||pre20;backupInfo.innerHTML=pre53?'已自动保留 <b>升级到 v0.5.3 前的本机完整快照</b>。本次升级只调整复习池去重逻辑，不改正式测试排期。':pre50?'已自动保留 <b>升级到 v0.5 前的本机完整快照</b>。固定搭配迁移或关联异常时可用于恢复。':pre30?'已保留升级到 v0.3 前的本机快照。':pre20?'已检测到早期升级快照；可用于合并恢复缺失数据。':'本机没有检测到升级前快照。建议定期导出 JSON 到“文件”App或电脑。';preBackupBtn.disabled=!pre;preBackupBtn.style.opacity=pre?'1':'.5';if(typeof recoverPreBtn!=='undefined'&&recoverPreBtn){recoverPreBtn.disabled=!recoverable;recoverPreBtn.style.opacity=recoverable?'1':'.5'}}
 function drawTrend(){
   let c=document.getElementById('trend');if(!c)return;
@@ -1380,7 +1429,7 @@ addWord=function(){
 };
 
 // 升级时先留一份本机快照，再清自动计划缓存；学习记录本身不动。
-if(!state?.meta?.dynamicBudgetReviewCap_v057)safeLocalBackup('pet_checkin_v1_backup_pre_v057_',state);
+if(!state?.meta?.dynamicBudgetReviewCap_v057)safeLocalBackup('pet_family_backup_pre_v057_',state);
 state=migrateState(state);
 localStorage.setItem(KEY,JSON.stringify(state));
 scheduleCloudSync();
@@ -1784,7 +1833,7 @@ syncTestSourceUI=function(){
 };
 
 // 迁移当前数据：补词性、建立首次学习标记字段；清派生计划缓存，不改任何真实历史测试。
-state=migrateState(state);state.smartPlans={};refreshSmartPlan(localDateKey());state.version=APP_VERSION;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync();
+state=migrateState(state);state.smartPlans={};refreshSmartPlan(localDateKey());state.version=APP_VERSION;state.meta=state.meta||{};state.meta.product=FAMILY_PRODUCT;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync();
 /* ===== v0.5.9 Review → Test 学习闭环 + POS：结束 ===== */
 
 
@@ -1893,7 +1942,7 @@ renderHome=function(){
 };
 
 // 当前数据立即迁移。addedDate 只从可信 ID 日期/时间戳推断；w0/w1 这类老种子词保持为空，归入“历史未学习”。
-state=migrateState(state);state.smartPlans={};refreshSmartPlan(localDateKey());state.version=APP_VERSION;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync();
+state=migrateState(state);state.smartPlans={};refreshSmartPlan(localDateKey());state.version=APP_VERSION;state.meta=state.meta||{};state.meta.product=FAMILY_PRODUCT;localStorage.setItem(KEY,JSON.stringify(state));scheduleCloudSync();
 /* ===== v0.5.9.1 新词优先识别修复：结束 ===== */
 
 
@@ -2436,6 +2485,7 @@ function betaCloudMeta(){try{return JSON.parse(localStorage.getItem(betaMetaKey(
 function saveBetaCloudMeta(x){localStorage.setItem(betaMetaKey(),JSON.stringify({...betaCloudMeta(),...x}))}
 async function betaActivateChild(child){
   betaChild=child;
+  migrateLegacyFamilyStorageOnce();
   KEY=betaLocalKey(child.id);
   PRE_KEY='pet_family_beta_pre_upgrade_'+child.id;
   PRE_V030_KEY='pet_family_beta_pre_upgrade2_'+child.id;
